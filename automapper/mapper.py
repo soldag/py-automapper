@@ -49,7 +49,7 @@ def _object_contains(obj: Any, field_name: str) -> bool:
 
 def _is_primitive(obj: Any) -> bool:
     """Check if object type is primitive"""
-    return type(obj) in __PRIMITIVE_TYPES
+    return any(issubclass(type(obj), t) for t in __PRIMITIVE_TYPES)
 
 
 def _is_enum(obj: Any) -> bool:
