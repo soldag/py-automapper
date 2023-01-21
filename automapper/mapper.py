@@ -61,7 +61,10 @@ def _try_get_field_value(
     field_name: str, original_obj: Any, custom_mapping: FieldsMap
 ) -> Tuple[bool, Any]:
     if field_name in (custom_mapping or {}):
-        return True, custom_mapping[field_name]  # type: ignore [index]
+        value = custom_mapping[field_name]  # type: ignore [index]
+        if callable(value):
+            value = value(original_obj)
+        return True, value
     if hasattr(original_obj, field_name):
         return True, getattr(original_obj, field_name)
     if _object_contains(original_obj, field_name):
@@ -105,12 +108,16 @@ class MappingWrapper(Generic[T]):
         Returns:
             T: instance of `target class` with mapped values from `source class` or custom `fields_mapping` dictionary.
         """
+        common_fields_mapping = self.__mapper._get_common_fields_mapping(
+            obj, self.__target_cls, fields_mapping
+        )
+
         return self.__mapper._map_common(
             obj,
             self.__target_cls,
             set(),
             skip_none_values=skip_none_values,
-            custom_mapping=fields_mapping,
+            custom_mapping=common_fields_mapping,
             use_deepcopy=use_deepcopy,
         )
 
@@ -225,25 +232,11 @@ class Mapper:
         obj_type = type(obj)
         if obj_type not in self._mappings:
             raise MappingError(f"Missing mapping type for input type {obj_type}")
-        obj_type_prefix = f"{obj_type.__name__}."
 
-        target_cls, target_cls_field_mappings = self._mappings[obj_type]
-
-        common_fields_mapping = fields_mapping
-        if target_cls_field_mappings:
-            # transform mapping if it's from source class field
-            common_fields_mapping = {
-                target_obj_field: getattr(obj, source_field[len(obj_type_prefix) :])
-                if isinstance(source_field, str)
-                and source_field.startswith(obj_type_prefix)
-                else source_field
-                for target_obj_field, source_field in target_cls_field_mappings.items()
-            }
-            if fields_mapping:
-                common_fields_mapping = {
-                    **common_fields_mapping,
-                    **fields_mapping,
-                }  # merge two dict into one, fields_mapping has priority
+        target_cls, _ = self._mappings[obj_type]
+        common_fields_mapping = self._get_common_fields_mapping(
+            obj, target_cls, fields_mapping
+        )
 
         return self._map_common(
             obj,
@@ -269,6 +262,34 @@ class Mapper:
             f"No spec function is added for base class of {target_cls_name!r}"
         )
 
+    def _get_common_fields_mapping(
+        self, obj: object, target_cls: Type[T], override: FieldsMap = None
+    ) -> FieldsMap:
+        obj_type = type(obj)
+        obj_type_prefix = f"{obj_type.__name__}."
+
+        configured_target_cls, target_cls_field_mappings = self._mappings.get(
+            obj_type, (None, None)
+        )
+        if target_cls != configured_target_cls or not target_cls_field_mappings:
+            return override
+
+        # transform mapping if it's from source class field
+        common_fields_mapping = {
+            target_obj_field: getattr(obj, source_field[len(obj_type_prefix) :])
+            if isinstance(source_field, str)
+            and source_field.startswith(obj_type_prefix)
+            else source_field
+            for target_obj_field, source_field in target_cls_field_mappings.items()
+        }
+        if override:
+            common_fields_mapping = {
+                **common_fields_mapping,
+                **override,
+            }
+
+        return common_fields_mapping
+
     def _map_subobject(
         self, obj: S, _visited_stack: Set[int], skip_none_values: bool = False
     ) -> Any:
@@ -281,9 +302,13 @@ class Mapper:
             raise CircularReferenceError()
 
         if type(obj) in self._mappings:
-            target_cls, _ = self._mappings[type(obj)]
+            target_cls, target_cls_field_mappings = self._mappings[type(obj)]
             result: Any = self._map_common(
-                obj, target_cls, _visited_stack, skip_none_values=skip_none_values
+                obj,
+                target_cls,
+                _visited_stack,
+                skip_none_values=skip_none_values,
+                custom_mapping=target_cls_field_mappings,
             )
         else:
             _visited_stack.add(obj_id)

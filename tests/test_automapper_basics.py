@@ -104,6 +104,31 @@ def test_map__override_field_value_register():
         mapper._mappings.clear()
 
 
+def test_map__callable_field():
+    user_info = UserInfo("John Malkovich", 35, "engineer")
+    public_user_info = mapper.to(PublicUserInfoDiff).map(
+        user_info, fields_mapping={"full_name": lambda x: x.name}
+    )
+
+    assert public_user_info.full_name == "John Malkovich"
+    assert public_user_info.profession == "engineer"
+
+
+def test_map__callable_field_register():
+    try:
+        mapper.add(
+            UserInfo, PublicUserInfoDiff, fields_mapping={"full_name": lambda x: x.name}
+        )
+
+        user_info = UserInfo("John Malkovich", 35, "engineer")
+        public_user_info: PublicUserInfoDiff = mapper.map(user_info)
+
+        assert public_user_info.full_name == "John Malkovich"
+        assert public_user_info.profession == "engineer"
+    finally:
+        mapper._mappings.clear()
+
+
 def test_map__check_deepcopy_not_applied_if_use_deepcopy_false():
     address = Address(street="Main Street", number=1, zip_code=100001, city="Test City")
     info = PersonInfo("John Doe", age=35, address=address)
